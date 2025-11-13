@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>设备追踪系统</title>
-    <script src="https://map.qq.com/api/gljs?v=1.exp&key=YOUR_KEY"></script>
+    <!-- 不再在这里写死地图 KEY，改为在配置面板里动态加载 -->
+
     <style>
         * {
             margin: 0;
@@ -318,9 +319,9 @@
         <div class="config-panel" id="configPanel">
             <div class="config-item">
                 <label>🔗 云函数URL:</label>
-                <input type="text" id="apiUrlInput" 
-                    value="https://1385981252-fuxkas5hn8.ap-shanghai.tencentscf.com"
-                    placeholder="https://...">
+                <input type="text" id="apiUrlInput"
+                       value="https://1385981252-fuxkas5hn8.ap-shanghai.tencentscf.com"
+                       placeholder="https://...">
             </div>
             <div class="config-item">
                 <label>🗺️ 腾讯地图Key:</label>
@@ -336,7 +337,7 @@
 
             <div class="map-wrapper">
                 <div id="map"></div>
-                
+
                 <div class="info-card" id="infoCard">
                     <h3>
                         <span>📱 设备信息</span>
@@ -362,7 +363,7 @@
                         <span class="info-label">网络类型</span>
                         <span class="info-value" id="infoNetwork">-</span>
                     </div>
-                    
+
                     <div class="timeline-section">
                         <h4>📍 轨迹记录</h4>
                         <div id="timelineContainer"></div>
@@ -375,6 +376,73 @@
     <button class="fab" onclick="refreshData()" title="刷新">🔄</button>
 
     <script>
+        // =========================
+        //  WGS84(GPS) -> GCJ-02 转换
+        // =========================
+        const PI = 3.14159265358979323846;
+        const a = 6378245.0;
+        const ee = 0.00669342162296594323;
+
+        function outOfChina(lng, lat) {
+            return (lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271);
+        }
+
+        function transformLat(x, y) {
+            let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y +
+                0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+            ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 *
+                Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+            ret += (20.0 * Math.sin(y * PI) + 40.0 *
+                Math.sin(y / 3.0 * PI)) * 2.0 / 3.0;
+            ret += (160.0 * Math.sin(y / 12.0 * PI) + 320 *
+                Math.sin(y * PI / 30.0)) * 2.0 / 3.0;
+            return ret;
+        }
+
+        function transformLng(x, y) {
+            let ret = 300.0 + x + 2.0 * y + 0.1 * x * x +
+                0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+            ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 *
+                Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+            ret += (20.0 * Math.sin(x * PI) + 40.0 *
+                Math.sin(x / 3.0 * PI)) * 2.0 / 3.0;
+            ret += (150.0 * Math.sin(x / 12.0 * PI) + 300.0 *
+                Math.sin(x / 30.0 * PI)) * 2.0 / 3.0;
+            return ret;
+        }
+
+        // 输入：WGS84，经纬度
+        // 返回：GCJ-02，经纬度 [lng, lat]
+        function wgs84ToGcj02(lng, lat) {
+            lng = Number(lng);
+            lat = Number(lat);
+            if (outOfChina(lng, lat)) {
+                return [lng, lat];
+            }
+            let dLat = transformLat(lng - 105.0, lat - 35.0);
+            let dLng = transformLng(lng - 105.0, lat - 35.0);
+            const radLat = lat / 180.0 * PI;
+            let magic = Math.sin(radLat);
+            magic = 1 - ee * magic * magic;
+            const sqrtMagic = Math.sqrt(magic);
+            dLat = (dLat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * PI);
+            dLng = (dLng * 180.0) / (a / sqrtMagic * Math.cos(radLat) * PI);
+            const mgLat = lat + dLat;
+            const mgLng = lng + dLng;
+            return [mgLng, mgLat];
+        }
+
+        // 从接口的 location 对象生成适配腾讯地图的经纬度
+        function convertLoc(loc) {
+            const lng = Number(loc.longitude);
+            const lat = Number(loc.latitude);
+            const [gcjLng, gcjLat] = wgs84ToGcj02(lng, lat);
+            return { lng: gcjLng, lat: gcjLat };
+        }
+
+        // =========================
+        //      原有逻辑
+        // =========================
         let map, markers = {}, polylines = {}, currentDeviceId = null;
         let API_BASE_URL = 'https://1385981252-fuxkas5hn8.ap-shanghai.tencentscf.com';
         let isConfigured = false;
@@ -397,27 +465,27 @@
         function saveConfig() {
             const apiUrl = document.getElementById('apiUrlInput').value.trim();
             const mapKey = document.getElementById('mapKeyInput').value.trim();
-            
+
             if (!apiUrl) {
                 showMessage('请填写云函数URL', 'error');
                 return;
             }
-            
+
             if (!mapKey) {
                 showMessage('请填写腾讯地图Key', 'error');
                 return;
             }
-            
+
             localStorage.setItem('apiUrl', apiUrl);
             localStorage.setItem('mapKey', mapKey);
             API_BASE_URL = apiUrl;
-            
+
             const oldScript = document.querySelector('script[src*="map.qq.com"]');
             if (oldScript) oldScript.remove();
-            
+
             const script = document.createElement('script');
             script.src = `https://map.qq.com/api/gljs?v=1.exp&key=${mapKey}`;
-            script.onload = function() {
+            script.onload = function () {
                 isConfigured = true;
                 showMessage('配置成功!', 'success');
                 toggleConfig();
@@ -433,22 +501,23 @@
         function loadStoredConfig() {
             const savedApiUrl = localStorage.getItem('apiUrl');
             const savedMapKey = localStorage.getItem('mapKey');
-            
+
             if (savedApiUrl) {
                 document.getElementById('apiUrlInput').value = savedApiUrl;
                 API_BASE_URL = savedApiUrl;
             }
-            
+
             if (savedMapKey) {
                 document.getElementById('mapKeyInput').value = savedMapKey;
-                
+
                 const script = document.createElement('script');
                 script.src = `https://map.qq.com/api/gljs?v=1.exp&key=${savedMapKey}`;
-                script.onload = function() {
+                script.onload = function () {
                     isConfigured = true;
                     initMap();
                     loadDevices();
                 };
+                script.onerror = () => showMessage('地图加载失败', 'error');
                 document.head.appendChild(script);
             }
         }
@@ -463,21 +532,21 @@
 
         async function loadDevices() {
             if (!isConfigured) return;
-            
+
             try {
                 const response = await fetch(`${API_BASE_URL}/devices`);
                 const result = await response.json();
-                
+
                 if (result.code === 0) {
                     const devices = result.data.devices;
                     const bar = document.getElementById('deviceBar');
                     bar.innerHTML = '';
-                    
+
                     if (devices.length === 0) {
                         bar.innerHTML = '<div class="loading">暂无设备</div>';
                         return;
                     }
-                    
+
                     devices.forEach(deviceId => {
                         const chip = document.createElement('div');
                         chip.className = 'device-chip';
@@ -489,7 +558,7 @@
                         `;
                         bar.appendChild(chip);
                     });
-                    
+
                     if (!currentDeviceId) loadDeviceData(devices[0]);
                 }
             } catch (error) {
@@ -499,15 +568,15 @@
 
         async function loadDeviceData(deviceId) {
             currentDeviceId = deviceId;
-            
+
             document.querySelectorAll('.device-chip').forEach(chip => {
                 chip.classList.toggle('active', chip.dataset.deviceId === deviceId);
             });
-            
+
             try {
                 const response = await fetch(`${API_BASE_URL}/locations?device_id=${deviceId}&limit=50`);
                 const result = await response.json();
-                
+
                 if (result.code === 0) {
                     displayLocations(deviceId, result.data.locations);
                     loadHeartbeat(deviceId);
@@ -518,93 +587,88 @@
             }
         }
 
-function displayLocations(deviceId, locations) {
-    if (!map || !locations || locations.length === 0) {
-        showMessage('该设备暂时没有轨迹数据', 'error');
-        return;
-    }
+        // 使用 GCJ-02 坐标在腾讯地图上画轨迹
+        function displayLocations(deviceId, locations) {
+            if (!map || !locations || locations.length === 0) {
+                showMessage('该设备暂时没有轨迹数据', 'error');
+                return;
+            }
 
-    // 清除旧的 marker 和 polyline
-    if (markers[deviceId]) {
-        markers[deviceId].setMap(null);
-    }
-    if (polylines[deviceId]) {
-        polylines[deviceId].setMap(null);
-    }
+            // 清除旧图层
+            if (markers[deviceId]) {
+                markers[deviceId].setMap(null);
+            }
+            if (polylines[deviceId]) {
+                polylines[deviceId].setMap(null);
+            }
 
-    // 把字符串经纬度转成数字，构造轨迹路径
-    const path = locations.map(loc => new TMap.LatLng(
-        Number(loc.latitude),
-        Number(loc.longitude)
-    ));
+            // 轨迹路径（转换为 GCJ-02）
+            const path = locations.map(loc => {
+                const { lng, lat } = convertLoc(loc);
+                return new TMap.LatLng(lat, lng);
+            });
 
-    // 画轨迹线（简单样式）
-    polylines[deviceId] = new TMap.MultiPolyline({
-        map: map,
-        styles: {
-            'blue': new TMap.PolylineStyle({
-                color: '#667eea',
-                width: 4
-            })
-        },
-        geometries: [{
-            id: deviceId + '_poly',
-            styleId: 'blue',
-            paths: path
-        }]
-    });
+            polylines[deviceId] = new TMap.MultiPolyline({
+                map: map,
+                styles: {
+                    blue: new TMap.PolylineStyle({
+                        color: '#667eea',
+                        width: 4
+                    })
+                },
+                geometries: [{
+                    id: deviceId + '_poly',
+                    styleId: 'blue',
+                    paths: path
+                }]
+            });
 
-    // 最新一点（注意：你的数据现在是“最新在前”，所以取 [0]）
-    const latest = locations[0];
+            // 最新点（数组最新在前）
+            const latest = locations[0];
+            const latestConv = convertLoc(latest);
 
-    // 画当前位置 marker：不自定义样式，直接用默认图标
-    markers[deviceId] = new TMap.MultiMarker({
-        map: map,
-        geometries: [{
-            id: deviceId + '_marker',
-            position: new TMap.LatLng(
-                Number(latest.latitude),
-                Number(latest.longitude)
-            )
-        }]
-    });
+            markers[deviceId] = new TMap.MultiMarker({
+                map: map,
+                geometries: [{
+                    id: deviceId + '_marker',
+                    position: new TMap.LatLng(latestConv.lat, latestConv.lng)
+                }]
+            });
 
-    // 把地图拉近到这个点
-    map.setCenter(new TMap.LatLng(
-        Number(latest.latitude),
-        Number(latest.longitude)
-    ));
-    map.setZoom(16);
+            map.setCenter(new TMap.LatLng(latestConv.lat, latestConv.lng));
+            map.setZoom(16);
 
-    // ===== 更新右侧信息卡 + 时间线（保留你原来的逻辑） =====
-    document.getElementById('infoDeviceId').textContent =
-        deviceId.substring(0, 12) + '...';
-    document.getElementById('infoLastUpdate').textContent = latest.time;
-    document.getElementById('infoLocation').textContent =
-        `${Number(latest.latitude).toFixed(6)}, ${Number(latest.longitude).toFixed(6)}`;
+            // 信息卡：这里位置显示仍用原始 GPS
+            document.getElementById('infoDeviceId').textContent =
+                deviceId.substring(0, 12) + '...';
+            document.getElementById('infoLastUpdate').textContent = latest.time;
+            document.getElementById('infoLocation').textContent =
+                `${Number(latest.latitude).toFixed(6)}, ${Number(latest.longitude).toFixed(6)}`;
 
-    const timeline = document.getElementById('timelineContainer');
-    timeline.innerHTML = '';
-    locations.slice(0, 5).forEach(loc => {
-        const item = document.createElement('div');
-        item.className = 'timeline-item';
-        item.innerHTML = `
-            <div class="timeline-time">${loc.time}</div>
-            <div>${Number(loc.latitude).toFixed(6)}, ${Number(loc.longitude).toFixed(6)}</div>
-        `;
-        timeline.appendChild(item);
-    });
-}
+            const timeline = document.getElementById('timelineContainer');
+            timeline.innerHTML = '';
+            locations.slice(0, 5).forEach(loc => {
+                const { lng, lat } = convertLoc(loc);
+                const item = document.createElement('div');
+                item.className = 'timeline-item';
+                item.innerHTML = `
+                    <div class="timeline-time">${loc.time}</div>
+                    <div>${lat.toFixed(6)}, ${lng.toFixed(6)}</div>
+                `;
+                timeline.appendChild(item);
+            });
+        }
+
         async function loadHeartbeat(deviceId) {
             try {
                 const response = await fetch(`${API_BASE_URL}/heartbeat?device_id=${deviceId}`);
                 const result = await response.json();
-                
+
                 if (result.code === 0 && result.data) {
                     const hb = result.data;
                     document.getElementById('infoBattery').textContent = hb.battery_level + '%';
                     document.getElementById('infoNetwork').textContent = hb.network_type || '-';
-                    
+
                     const isOnline = (Date.now() - hb.timestamp) < 300000;
                     document.querySelectorAll('.device-chip').forEach(chip => {
                         if (chip.dataset.deviceId === deviceId) {
