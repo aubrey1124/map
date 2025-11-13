@@ -518,65 +518,83 @@
             }
         }
 
-        function displayLocations(deviceId, locations) {
-            if (!map || locations.length === 0) return;
-            
-            if (markers[deviceId]) markers[deviceId].setMap(null);
-            if (polylines[deviceId]) polylines[deviceId].setMap(null);
-            
-            const path = locations.map(loc => new TMap.LatLng(loc.latitude, loc.longitude));
-            
-            polylines[deviceId] = new TMap.MultiPolyline({
-                map: map,
-                styles: {
-                    'style_blue': new TMap.PolylineStyle({
-                        color: '#667eea',
-                        width: 4,
-                        borderWidth: 2,
-                        borderColor: '#FFF'
-                    })
-                },
-                geometries: [{ styleId: 'style_blue', paths: path }]
-            });
-            
-            const latest = locations[0];
-            markers[deviceId] = new TMap.MultiMarker({
-                map: map,
-                styles: {
-                    'marker': new TMap.MarkerStyle({
-                        width: 25,
-                        height: 35,
-                        anchor: { x: 12, y: 35 }
-                    })
-                },
-                geometries: [{
-                    id: deviceId,
-                    styleId: 'marker',
-                    position: new TMap.LatLng(latest.latitude, latest.longitude)
-                }]
-            });
-            
-            map.setCenter(new TMap.LatLng(latest.latitude, latest.longitude));
-            map.setZoom(14);
-            
-            document.getElementById('infoDeviceId').textContent = deviceId.substring(0, 12) + '...';
-            document.getElementById('infoLastUpdate').textContent = latest.time;
-            document.getElementById('infoLocation').textContent = 
-                `${latest.latitude.toFixed(6)}, ${latest.longitude.toFixed(6)}`;
-            
-            const timeline = document.getElementById('timelineContainer');
-            timeline.innerHTML = '';
-            locations.slice(0, 5).forEach(loc => {
-                const item = document.createElement('div');
-                item.className = 'timeline-item';
-                item.innerHTML = `
-                    <div class="timeline-time">${loc.time}</div>
-                    <div>${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}</div>
-                `;
-                timeline.appendChild(item);
-            });
-        }
+function displayLocations(deviceId, locations) {
+    if (!map || !locations || locations.length === 0) {
+        showMessage('该设备暂时没有轨迹数据', 'error');
+        return;
+    }
 
+    // 清除旧的 marker 和 polyline
+    if (markers[deviceId]) {
+        markers[deviceId].setMap(null);
+    }
+    if (polylines[deviceId]) {
+        polylines[deviceId].setMap(null);
+    }
+
+    // 把字符串经纬度转成数字，构造轨迹路径
+    const path = locations.map(loc => new TMap.LatLng(
+        Number(loc.latitude),
+        Number(loc.longitude)
+    ));
+
+    // 画轨迹线（简单样式）
+    polylines[deviceId] = new TMap.MultiPolyline({
+        map: map,
+        styles: {
+            'blue': new TMap.PolylineStyle({
+                color: '#667eea',
+                width: 4
+            })
+        },
+        geometries: [{
+            id: deviceId + '_poly',
+            styleId: 'blue',
+            paths: path
+        }]
+    });
+
+    // 最新一点（注意：你的数据现在是“最新在前”，所以取 [0]）
+    const latest = locations[0];
+
+    // 画当前位置 marker：不自定义样式，直接用默认图标
+    markers[deviceId] = new TMap.MultiMarker({
+        map: map,
+        geometries: [{
+            id: deviceId + '_marker',
+            position: new TMap.LatLng(
+                Number(latest.latitude),
+                Number(latest.longitude)
+            )
+        }]
+    });
+
+    // 把地图拉近到这个点
+    map.setCenter(new TMap.LatLng(
+        Number(latest.latitude),
+        Number(latest.longitude)
+    ));
+    map.setZoom(16);
+
+    // ===== 更新右侧信息卡 + 时间线（保留你原来的逻辑） =====
+    document.getElementById('infoDeviceId').textContent =
+        deviceId.substring(0, 12) + '...';
+    document.getElementById('infoLastUpdate').textContent = latest.time;
+    document.getElementById('infoLocation').textContent =
+        `${Number(latest.latitude).toFixed(6)}, ${Number(latest.longitude).toFixed(6)}`;
+
+    const timeline = document.getElementById('timelineContainer');
+    timeline.innerHTML = '';
+    locations.slice(0, 5).forEach(loc => {
+        const item = document.createElement('div');
+        item.className = 'timeline-item';
+        item.innerHTML = `
+            <div class="timeline-time">${loc.time}</div>
+            <div>${Number(loc.latitude).toFixed(6)}, ${Number(loc.longitude).toFixed(6)}</div>
+        `;
+        timeline.appendChild(item);
+    });
+}
         async function loadHeartbeat(deviceId) {
             try {
                 const response = await fetch(`${API_BASE_URL}/heartbeat?device_id=${deviceId}`);
