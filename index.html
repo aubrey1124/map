@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>设备追踪系统</title>
+    <script src="https://map.qq.com/api/gljs?v=1.exp&key=YOUR_KEY"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #667eea;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: white;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            font-size: 20px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 12px;
+        }
+
+        .config-toggle {
+            background: white;
+            color: #667eea;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 12px;
+            margin-top: 10px;
+            cursor: pointer;
+        }
+
+        .config-panel {
+            background: #f8f9fa;
+            padding: 15px;
+            border-bottom: 1px solid #e0e0e0;
+            display: none;
+        }
+
+        .config-panel.show {
+            display: block;
+        }
+
+        .config-item {
+            margin-bottom: 12px;
+        }
+
+        .config-item label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+            font-size: 13px;
+        }
+
+        .config-item input {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .btn-save {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            width: 100%;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .device-bar {
+            background: white;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 10px;
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+
+        .device-chip {
+            background: #f0f0f0;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 13px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            transition: all 0.3s;
+            flex-shrink: 0;
+        }
+
+        .device-chip.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .device-chip .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .map-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        .info-card {
+            position: absolute;
+            bottom: 20px;
+            left: 10px;
+            right: 10px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            padding: 15px;
+            max-height: 50%;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .info-card.show {
+            display: block;
+        }
+
+        .info-card h3 {
+            font-size: 16px;
+            margin-bottom: 12px;
+            color: #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .close-btn {
+            background: #f0f0f0;
+            border: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 13px;
+        }
+
+        .info-label {
+            color: #666;
+        }
+
+        .info-value {
+            color: #333;
+            font-weight: 600;
+        }
+
+        .timeline-section {
+            margin-top: 15px;
+        }
+
+        .timeline-section h4 {
+            font-size: 14px;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .timeline-item {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+
+        .timeline-time {
+            color: #667eea;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .fab {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            font-size: 24px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            cursor: pointer;
+            z-index: 1000;
+        }
+
+        .message {
+            position: fixed;
+            top: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 9999;
+            display: none;
+        }
+
+        .message.show {
+            display: block;
+        }
+
+        .message.error {
+            background: #fee;
+            color: #c33;
+        }
+
+        .message.success {
+            background: #efe;
+            color: #383;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .status-online { background: #10b981; }
+        .status-offline { background: #ef4444; }
+
+        @media (min-width: 768px) {
+            .header h1 { font-size: 24px; }
+            .main-content {
+                flex-direction: row;
+            }
+            .device-bar {
+                width: 250px;
+                flex-direction: column;
+                overflow-y: auto;
+                overflow-x: hidden;
+            }
+            .device-chip {
+                width: 100%;
+                justify-content: flex-start;
+            }
+            .info-card {
+                bottom: 20px;
+                left: auto;
+                right: 20px;
+                max-width: 350px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="message" class="message"></div>
+
+    <div class="container">
+        <div class="header">
+            <h1>📍 设备追踪</h1>
+            <p>实时监控 · 轨迹回放</p>
+            <button class="config-toggle" onclick="toggleConfig()">⚙️ 配置</button>
+        </div>
+
+        <div class="config-panel" id="configPanel">
+            <div class="config-item">
+                <label>🔗 云函数URL:</label>
+                <input type="text" id="apiUrlInput" 
+                    value="https://1385981252-fuxkas5hn8.ap-shanghai.tencentscf.com"
+                    placeholder="https://...">
+            </div>
+            <div class="config-item">
+                <label>🗺️ 腾讯地图Key:</label>
+                <input type="text" id="mapKeyInput" placeholder="申请地址: lbs.qq.com">
+            </div>
+            <button class="btn-save" onclick="saveConfig()">💾 保存并加载</button>
+        </div>
+
+        <div class="main-content">
+            <div class="device-bar" id="deviceBar">
+                <div class="loading">配置后加载...</div>
+            </div>
+
+            <div class="map-wrapper">
+                <div id="map"></div>
+                
+                <div class="info-card" id="infoCard">
+                    <h3>
+                        <span>📱 设备信息</span>
+                        <button class="close-btn" onclick="closeInfo()">×</button>
+                    </h3>
+                    <div class="info-row">
+                        <span class="info-label">设备ID</span>
+                        <span class="info-value" id="infoDeviceId">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">最后更新</span>
+                        <span class="info-value" id="infoLastUpdate">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">位置坐标</span>
+                        <span class="info-value" id="infoLocation">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">电池电量</span>
+                        <span class="info-value" id="infoBattery">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">网络类型</span>
+                        <span class="info-value" id="infoNetwork">-</span>
+                    </div>
+                    
+                    <div class="timeline-section">
+                        <h4>📍 轨迹记录</h4>
+                        <div id="timelineContainer"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button class="fab" onclick="refreshData()" title="刷新">🔄</button>
+
+    <script>
+        let map, markers = {}, polylines = {}, currentDeviceId = null;
+        let API_BASE_URL = 'https://1385981252-fuxkas5hn8.ap-shanghai.tencentscf.com';
+        let isConfigured = false;
+
+        function toggleConfig() {
+            document.getElementById('configPanel').classList.toggle('show');
+        }
+
+        function closeInfo() {
+            document.getElementById('infoCard').classList.remove('show');
+        }
+
+        function showMessage(text, type) {
+            const msg = document.getElementById('message');
+            msg.textContent = text;
+            msg.className = `message ${type} show`;
+            setTimeout(() => msg.classList.remove('show'), 3000);
+        }
+
+        function saveConfig() {
+            const apiUrl = document.getElementById('apiUrlInput').value.trim();
+            const mapKey = document.getElementById('mapKeyInput').value.trim();
+            
+            if (!apiUrl) {
+                showMessage('请填写云函数URL', 'error');
+                return;
+            }
+            
+            if (!mapKey) {
+                showMessage('请填写腾讯地图Key', 'error');
+                return;
+            }
+            
+            localStorage.setItem('apiUrl', apiUrl);
+            localStorage.setItem('mapKey', mapKey);
+            API_BASE_URL = apiUrl;
+            
+            const oldScript = document.querySelector('script[src*="map.qq.com"]');
+            if (oldScript) oldScript.remove();
+            
+            const script = document.createElement('script');
+            script.src = `https://map.qq.com/api/gljs?v=1.exp&key=${mapKey}`;
+            script.onload = function() {
+                isConfigured = true;
+                showMessage('配置成功!', 'success');
+                toggleConfig();
+                setTimeout(() => {
+                    initMap();
+                    loadDevices();
+                }, 1000);
+            };
+            script.onerror = () => showMessage('地图加载失败', 'error');
+            document.head.appendChild(script);
+        }
+
+        function loadStoredConfig() {
+            const savedApiUrl = localStorage.getItem('apiUrl');
+            const savedMapKey = localStorage.getItem('mapKey');
+            
+            if (savedApiUrl) {
+                document.getElementById('apiUrlInput').value = savedApiUrl;
+                API_BASE_URL = savedApiUrl;
+            }
+            
+            if (savedMapKey) {
+                document.getElementById('mapKeyInput').value = savedMapKey;
+                
+                const script = document.createElement('script');
+                script.src = `https://map.qq.com/api/gljs?v=1.exp&key=${savedMapKey}`;
+                script.onload = function() {
+                    isConfigured = true;
+                    initMap();
+                    loadDevices();
+                };
+                document.head.appendChild(script);
+            }
+        }
+
+        function initMap() {
+            if (!window.TMap) return;
+            map = new TMap.Map('map', {
+                center: new TMap.LatLng(39.915, 116.404),
+                zoom: 12
+            });
+        }
+
+        async function loadDevices() {
+            if (!isConfigured) return;
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/devices`);
+                const result = await response.json();
+                
+                if (result.code === 0) {
+                    const devices = result.data.devices;
+                    const bar = document.getElementById('deviceBar');
+                    bar.innerHTML = '';
+                    
+                    if (devices.length === 0) {
+                        bar.innerHTML = '<div class="loading">暂无设备</div>';
+                        return;
+                    }
+                    
+                    devices.forEach(deviceId => {
+                        const chip = document.createElement('div');
+                        chip.className = 'device-chip';
+                        chip.onclick = () => loadDeviceData(deviceId);
+                        chip.dataset.deviceId = deviceId;
+                        chip.innerHTML = `
+                            <span class="status-dot status-offline"></span>
+                            <span>${deviceId.substring(0, 8)}...</span>
+                        `;
+                        bar.appendChild(chip);
+                    });
+                    
+                    if (!currentDeviceId) loadDeviceData(devices[0]);
+                }
+            } catch (error) {
+                showMessage('加载设备失败', 'error');
+            }
+        }
+
+        async function loadDeviceData(deviceId) {
+            currentDeviceId = deviceId;
+            
+            document.querySelectorAll('.device-chip').forEach(chip => {
+                chip.classList.toggle('active', chip.dataset.deviceId === deviceId);
+            });
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/locations?device_id=${deviceId}&limit=50`);
+                const result = await response.json();
+                
+                if (result.code === 0) {
+                    displayLocations(deviceId, result.data.locations);
+                    loadHeartbeat(deviceId);
+                    document.getElementById('infoCard').classList.add('show');
+                }
+            } catch (error) {
+                showMessage('加载位置失败', 'error');
+            }
+        }
+
+        function displayLocations(deviceId, locations) {
+            if (!map || locations.length === 0) return;
+            
+            if (markers[deviceId]) markers[deviceId].setMap(null);
+            if (polylines[deviceId]) polylines[deviceId].setMap(null);
+            
+            const path = locations.map(loc => new TMap.LatLng(loc.latitude, loc.longitude));
+            
+            polylines[deviceId] = new TMap.MultiPolyline({
+                map: map,
+                styles: {
+                    'style_blue': new TMap.PolylineStyle({
+                        color: '#667eea',
+                        width: 4,
+                        borderWidth: 2,
+                        borderColor: '#FFF'
+                    })
+                },
+                geometries: [{ styleId: 'style_blue', paths: path }]
+            });
+            
+            const latest = locations[0];
+            markers[deviceId] = new TMap.MultiMarker({
+                map: map,
+                styles: {
+                    'marker': new TMap.MarkerStyle({
+                        width: 25,
+                        height: 35,
+                        anchor: { x: 12, y: 35 }
+                    })
+                },
+                geometries: [{
+                    id: deviceId,
+                    styleId: 'marker',
+                    position: new TMap.LatLng(latest.latitude, latest.longitude)
+                }]
+            });
+            
+            map.setCenter(new TMap.LatLng(latest.latitude, latest.longitude));
+            map.setZoom(14);
+            
+            document.getElementById('infoDeviceId').textContent = deviceId.substring(0, 12) + '...';
+            document.getElementById('infoLastUpdate').textContent = latest.time;
+            document.getElementById('infoLocation').textContent = 
+                `${latest.latitude.toFixed(6)}, ${latest.longitude.toFixed(6)}`;
+            
+            const timeline = document.getElementById('timelineContainer');
+            timeline.innerHTML = '';
+            locations.slice(0, 5).forEach(loc => {
+                const item = document.createElement('div');
+                item.className = 'timeline-item';
+                item.innerHTML = `
+                    <div class="timeline-time">${loc.time}</div>
+                    <div>${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}</div>
+                `;
+                timeline.appendChild(item);
+            });
+        }
+
+        async function loadHeartbeat(deviceId) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/heartbeat?device_id=${deviceId}`);
+                const result = await response.json();
+                
+                if (result.code === 0 && result.data) {
+                    const hb = result.data;
+                    document.getElementById('infoBattery').textContent = hb.battery_level + '%';
+                    document.getElementById('infoNetwork').textContent = hb.network_type || '-';
+                    
+                    const isOnline = (Date.now() - hb.timestamp) < 300000;
+                    document.querySelectorAll('.device-chip').forEach(chip => {
+                        if (chip.dataset.deviceId === deviceId) {
+                            const dot = chip.querySelector('.status-dot');
+                            dot.className = `status-dot ${isOnline ? 'status-online' : 'status-offline'}`;
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('加载心跳失败:', error);
+            }
+        }
+
+        function refreshData() {
+            if (!isConfigured) {
+                showMessage('请先配置', 'error');
+                return;
+            }
+            loadDevices();
+            if (currentDeviceId) loadDeviceData(currentDeviceId);
+        }
+
+        window.onload = () => {
+            loadStoredConfig();
+            setInterval(() => isConfigured && refreshData(), 30000);
+        };
+    </script>
+</body>
+</html>
