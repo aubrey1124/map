@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>设备追踪系统</title>
-    <script src="https://map.qq.com/api/gljs?v=1.exp&key=YOUR_KEY"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -364,6 +363,15 @@
             const list = document.getElementById('dateList');
             list.innerHTML = '<div style="padding:10px;font-weight:600;">📅 选择日期</div>';
             
+            if (dates.length === 0) {
+                list.innerHTML += '<div style="text-align:center;color:#999;padding:10px;">暂无数据</div>';
+                // 清空地图
+                if (markers) markers.setMap(null);
+                if (polyline) polyline.setMap(null);
+                document.getElementById('infoCard').classList.remove('show');
+                return;
+            }
+            
             dates.forEach(date => {
                 const item = document.createElement('div');
                 item.className = 'date-item';
@@ -373,7 +381,8 @@
                 list.appendChild(item);
             });
             
-            if (dates.length > 0) selectDate(dates[0], dateMap[dates[0]]);
+            // 自动选择最新日期并显示地图
+            selectDate(dates[0], dateMap[dates[0]]);
         }
 
         // 选择日期并显示轨迹
