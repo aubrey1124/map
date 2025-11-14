@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -124,6 +125,32 @@
             display: none;
         }
         .info-card.show { display: block; }
+        .point-popup {
+            position: absolute;
+            background: white;
+            padding: 12px;
+            border-radius: 10px;
+            box-shadow: 0 2px 15px rgba(0,0,0,0.3);
+            font-size: 13px;
+            pointer-events: none;
+            z-index: 9998;
+            display: none;
+            min-width: 200px;
+        }
+        .point-popup.show { display: block; }
+        .point-popup-close {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #f0f0f0;
+            border: none;
+            cursor: pointer;
+            font-size: 12px;
+            pointer-events: auto;
+        }
         .info-row {
             display: flex;
             justify-content: space-between;
@@ -202,6 +229,10 @@
                 </div>
                 <div class="info-card" id="infoCard">
                     <div id="infoContent"></div>
+                </div>
+                <div class="point-popup" id="pointPopup">
+                    <button class="point-popup-close" onclick="closePointPopup()">✕</button>
+                    <div id="pointPopupContent"></div>
                 </div>
             </div>
         </div>
@@ -318,18 +349,18 @@
             }
         }
 
-        // 🔥 核心功能：按日期分组
+        // 按日期分组
         function displayDateList(deviceId) {
             const locations = allLocations[deviceId] || [];
             const dateMap = {};
             
             locations.forEach(loc => {
-                const date = formatTimestamp(loc.time).split(' ')[0]; // 取日期部分
+                const date = formatTimestamp(loc.time).split(' ')[0];
                 if (!dateMap[date]) dateMap[date] = [];
                 dateMap[date].push(loc);
             });
             
-            const dates = Object.keys(dateMap).sort().reverse(); // 最新日期在前
+            const dates = Object.keys(dateMap).sort().reverse();
             const list = document.getElementById('dateList');
             list.innerHTML = '<div style="padding:10px;font-weight:600;">📅 选择日期</div>';
             
@@ -345,7 +376,7 @@
             if (dates.length > 0) selectDate(dates[0], dateMap[dates[0]]);
         }
 
-        // 🔥 选择日期并显示该天的轨迹
+        // 选择日期并显示轨迹
         function selectDate(date, locations) {
             currentDate = date;
             document.querySelectorAll('.date-item').forEach(d => {
@@ -354,7 +385,7 @@
             displayLocations(locations);
         }
 
-        // 🔥 核心显示逻辑：区分 GPS 和 Network，只用 GPS 画轨迹
+        // 核心显示逻辑：区分 GPS 和 Network
         function displayLocations(locations) {
             if (!map || !locations || locations.length === 0) {
                 showMessage('该日期没有数据', 'error');
@@ -364,6 +395,7 @@
             // 清除旧标记
             if (markers) markers.setMap(null);
             if (polyline) polyline.setMap(null);
+            closePointPopup();
 
             // 分离 GPS 和 Network 点
             const gpsLocs = locations.filter(loc => 
@@ -375,7 +407,7 @@
 
             console.log(`GPS: ${gpsLocs.length}, Network: ${networkLocs.length}`);
 
-            // 准备所有标记点（GPS绿色 + Network橙色）
+            // 准备所有标记点
             const geometries = [];
             
             gpsLocs.forEach((loc, idx) => {
@@ -394,27 +426,54 @@
                 });
             });
 
-            // 创建标记（不同颜色）
+            // 创建标记（使用SVG自定义颜色）
             markers = new TMap.MultiMarker({
                 map: map,
                 styles: {
                     gps: new TMap.MarkerStyle({
-                        width: 12,
-                        height: 12,
-                        anchor: { x: 6, y: 6 },
-                        color: '#10b981'
+                        width: 16,
+                        height: 16,
+                        anchor: { x: 8, y: 8 },
+                        src: 'data:image/svg+xml;base64,' + btoa(`
+                            <svg width="16" height="16" xmlns="http://www.w3.org/2000/svg">
+                                <circle cx="8" cy="8" r="6" fill="#10b981" stroke="white" stroke-width="2"/>
+                            </svg>
+                        `)
                     }),
                     network: new TMap.MarkerStyle({
-                        width: 10,
-                        height: 10,
-                        anchor: { x: 5, y: 5 },
-                        color: '#f59e0b'
+                        width: 14,
+                        height: 14,
+                        anchor: { x: 7, y: 7 },
+                        src: 'data:image/svg+xml;base64,' + btoa(`
+                            <svg width="14" height="14" xmlns="http://www.w3.org/2000/svg">
+                                <circle cx="7" cy="7" r="5" fill="#f59e0b" stroke="white" stroke-width="2"/>
+                            </svg>
+                        `)
                     })
                 },
                 geometries: geometries
             });
 
-            // 🔥 只用 GPS 点画轨迹线
+            // 添加点击事件显示时间
+            markers.on('click', (evt) => {
+                const geometry = evt.geometry;
+                const idParts = geometry.id.split('_');
+                const type = idParts[0];
+                const index = parseInt(idParts[1]);
+                
+                let location;
+                if (type === 'gps') {
+                    location = gpsLocs[index];
+                } else {
+                    location = networkLocs[index];
+                }
+                
+                if (location) {
+                    showPointInfo(location, geometry.position);
+                }
+            });
+
+            // 只用 GPS 点画轨迹线
             if (gpsLocs.length > 1) {
                 const path = gpsLocs.map(loc => 
                     new TMap.LatLng(Number(loc.latitude), Number(loc.longitude))
@@ -448,16 +507,14 @@
             }
         }
 
-        // 🔥 修复时间格式化
+        // 格式化时间戳
         function formatTimestamp(timestamp) {
             if (!timestamp) return '-';
             
-            // 如果已经是格式化的字符串
             if (typeof timestamp === 'string' && (timestamp.includes('-') || timestamp.includes(':'))) {
                 return timestamp;
             }
             
-            // 转换为数字
             const ts = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
             const date = new Date(ts);
             
@@ -471,6 +528,7 @@
             return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
         }
 
+        // 显示日期统计信息
         function showInfo(locations) {
             const latest = locations[0];
             const gpsCount = locations.filter(l => l.source === 'gps' || l.provider === 'gps').length;
@@ -502,6 +560,41 @@
             
             document.getElementById('infoContent').innerHTML = html;
             document.getElementById('infoCard').classList.add('show');
+        }
+
+        // 显示标记点详细信息
+        function showPointInfo(location, position) {
+            const popup = document.getElementById('pointPopup');
+            const content = document.getElementById('pointPopupContent');
+            
+            const type = location.source || location.provider || '未知';
+            const typeColor = (type === 'gps') ? '#10b981' : '#f59e0b';
+            const typeText = (type === 'gps') ? 'GPS定位' : '网络定位';
+            
+            content.innerHTML = `
+                <div style="font-weight:600;margin-bottom:8px;color:${typeColor}">
+                    ${typeText}
+                </div>
+                <div style="margin-bottom:5px">
+                    <strong>时间:</strong> ${formatTimestamp(location.time)}
+                </div>
+                <div style="margin-bottom:5px">
+                    <strong>坐标:</strong> ${location.latitude}, ${location.longitude}
+                </div>
+                ${location.accuracy ? `<div style="margin-bottom:5px"><strong>精度:</strong> ${location.accuracy}m</div>` : ''}
+                ${location.altitude ? `<div style="margin-bottom:5px"><strong>海拔:</strong> ${location.altitude}m</div>` : ''}
+                ${location.speed ? `<div><strong>速度:</strong> ${location.speed}m/s</div>` : ''}
+            `;
+            
+            // 计算弹窗位置
+            const pixel = map.projectToContainer(position);
+            popup.style.left = `${pixel.getX() - 100}px`;
+            popup.style.top = `${pixel.getY() - 150}px`;
+            popup.classList.add('show');
+        }
+
+        function closePointPopup() {
+            document.getElementById('pointPopup').classList.remove('show');
         }
 
         function refreshData() {
