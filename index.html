@@ -63,6 +63,7 @@
             margin-bottom: 8px;
             cursor: pointer;
             font-size: 13px;
+            word-break: break-all;
         }
         .device-chip.active {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -96,6 +97,7 @@
             border-radius: 10px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             font-size: 12px;
+            z-index: 999;
         }
         .legend-item {
             display: flex;
@@ -122,6 +124,7 @@
             max-height: 40%;
             overflow-y: auto;
             display: none;
+            z-index: 999;
         }
         .info-card.show { display: block; }
         .point-popup {
@@ -166,6 +169,7 @@
             border-radius: 8px;
             z-index: 9999;
             display: none;
+            max-width: 80%;
         }
         .message.show { display: block; }
         .message.error { background: #fee; color: #c33; }
@@ -239,13 +243,40 @@
     <button class="fab" onclick="refreshData()">🔄</button>
 
     <script>
-        let map, currentDeviceId, currentDate, allLocations = {};
+        let map, currentDeviceId, currentDate;
+        let allLocations = {};
         let API_BASE_URL = 'https://1385981252-fuxkas5hn8.ap-shanghai.tencentscf.com';
         let isConfigured = false;
         let markers = null, polyline = null;
 
         function toggleConfig() {
-            document.getElementById('configPanel').classList.toggle('show');
+            const panel = document.getElementById('configPanel');
+            const wasOpen = panel.classList.contains('show');
+            panel.classList.toggle('show');
+            
+            setTimeout(() => {
+                if (map) {
+                    try {
+                        map.resize();
+                        if (currentDeviceId && currentDate && !wasOpen) {
+                            const locations = allLocations[currentDeviceId];
+                            if (locations && locations.length > 0) {
+                                const dateMap = {};
+                                locations.forEach(loc => {
+                                    const timeField = loc.timestamp || loc.time;
+                                    if (!timeField) return;
+                                    const dateStr = formatTimestamp(timeField).split(' ')[0];
+                                    if (!dateMap[dateStr]) dateMap[dateStr] = [];
+                                    dateMap[dateStr].push(loc);
+                                });
+                                if (dateMap[currentDate]) displayLocations(dateMap[currentDate]);
+                            }
+                        }
+                    } catch (error) {
+                        console.error('调整地图失败:', error);
+                    }
+                }
+            }, 350);
         }
 
         function showMessage(text, type) {
@@ -262,28 +293,39 @@
                 showMessage('请填写完整配置', 'error');
                 return;
             }
+            
+            const oldApiUrl = localStorage.getItem('apiUrl');
+            const oldMapKey = localStorage.getItem('mapKey');
+            
+            if (apiUrl === oldApiUrl && mapKey === oldMapKey && isConfigured) {
+                showMessage('配置未改变', 'success');
+                toggleConfig();
+                return;
+            }
+            
             localStorage.setItem('apiUrl', apiUrl);
             localStorage.setItem('mapKey', mapKey);
             API_BASE_URL = apiUrl;
             
-            const script = document.createElement('script');
-            script.src = `https://map.qq.com/api/gljs?v=1.exp&key=${mapKey}`;
-            script.onload = () => {
-                isConfigured = true;
-                showMessage('配置成功', 'success');
+            if (mapKey !== oldMapKey) {
+                if (map) map = null;
+                const script = document.createElement('script');
+                script.src = `https://map.qq.com/api/gljs?v=1.exp&key=${mapKey}`;
+                script.onload = () => {
+                    isConfigured = true;
+                    showMessage('配置成功', 'success');
+                    toggleConfig();
+                    initMap();
+                    loadDevices();
+                };
+                script.onerror = () => showMessage('地图加载失败', 'error');
+                document.head.appendChild(script);
+            } else {
+                showMessage('配置已更新', 'success');
                 toggleConfig();
-                initMap();
-                loadDevices();
-            };
-            document.head.appendChild(script);
+                if (isConfigured) loadDevices();
+            }
         }
-        // 统一取时间字段，兼容 time 和 timestamp
-function getTime(loc) {
-    if (loc.time) return loc.time;
-    if (loc.timestamp) return loc.timestamp;
-    return null;
-}
-
 
         function loadStoredConfig() {
             const savedApiUrl = localStorage.getItem('apiUrl');
@@ -301,83 +343,176 @@ function getTime(loc) {
                     initMap();
                     loadDevices();
                 };
+                script.onerror = () => showMessage('地图加载失败', 'error');
                 document.head.appendChild(script);
             }
         }
 
         function initMap() {
             if (!window.TMap) return;
-            map = new TMap.Map('map', {
-                center: new TMap.LatLng(31.398, 121.349),
-                zoom: 16
-            });
+            try {
+                if (map) {
+                    try { map.destroy(); } catch (e) {}
+                }
+                map = new TMap.Map('map', {
+                    center: new TMap.LatLng(31.398, 121.349),
+                    zoom: 16
+                });
+                window.addEventListener('resize', () => {
+                    if (map) map.resize();
+                });
+            } catch (error) {
+                console.error('地图初始化失败:', error);
+            }
         }
 
         async function loadDevices() {
             if (!isConfigured) return;
             try {
                 const response = await fetch(`${API_BASE_URL}/devices`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
                 const result = await response.json();
-                if (result.code === 0) {
-                    const devices = result.data.devices;
-                    const list = document.getElementById('deviceList');
-                    list.innerHTML = '';
-                    devices.forEach(deviceId => {
-                        const chip = document.createElement('div');
-                        chip.className = 'device-chip';
-                        chip.textContent = deviceId.substring(0, 12) + '...';
-                        chip.onclick = () => selectDevice(deviceId);
-                        chip.dataset.deviceId = deviceId;
-                        list.appendChild(chip);
-                    });
-                    if (devices.length > 0) selectDevice(devices[0]);
+                console.log('设备API响应:', Array.isArray(result) ? '数组' : typeof result, result);
+                
+                let devices = [];
+                if (Array.isArray(result)) {
+                    devices = result;
+                } else if (result && typeof result === 'object') {
+                    if (result.code === 0 || result.code === '0') {
+                        devices = Array.isArray(result.data) ? result.data : (result.data?.devices || []);
+                    } else if (result.devices) {
+                        devices = result.devices;
+                    }
                 }
+                
+                if (devices.length === 0) {
+                    showMessage('未找到设备', 'error');
+                    document.getElementById('deviceList').innerHTML = '<div style="text-align:center;color:#999">暂无设备</div>';
+                    return;
+                }
+                
+                const list = document.getElementById('deviceList');
+                list.innerHTML = '';
+                devices.forEach(deviceId => {
+                    const chip = document.createElement('div');
+                    chip.className = 'device-chip';
+                    chip.textContent = deviceId.length > 16 ? deviceId.substring(0, 16) + '...' : deviceId;
+                    chip.title = deviceId;
+                    chip.onclick = () => selectDevice(deviceId);
+                    chip.dataset.deviceId = deviceId;
+                    list.appendChild(chip);
+                });
+                
+                if (devices.length > 0) selectDevice(devices[0]);
             } catch (error) {
+                console.error('加载设备失败:', error);
                 showMessage('加载设备失败', 'error');
             }
         }
 
         async function selectDevice(deviceId) {
+            console.log('\n=== 选择设备:', deviceId, '===');
             currentDeviceId = deviceId;
+            
             document.querySelectorAll('.device-chip').forEach(c => {
                 c.classList.toggle('active', c.dataset.deviceId === deviceId);
             });
             
+            document.getElementById('dateList').innerHTML = '<div style="text-align:center;color:#999;padding:10px;">加载中...</div>';
+            
             try {
-                const response = await fetch(`${API_BASE_URL}/locations?device_id=${deviceId}&limit=500`);
+                const url = `${API_BASE_URL}/locations?device_id=${encodeURIComponent(deviceId)}&limit=500`;
+                const response = await fetch(url);
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
                 const result = await response.json();
-                if (result.code === 0) {
-                    allLocations[deviceId] = result.data.locations;
-                    displayDateList(deviceId);
+                console.log('位置API响应类型:', Array.isArray(result) ? `数组(长度${result.length})` : typeof result);
+                
+                let locations = [];
+                
+                if (Array.isArray(result)) {
+                    locations = result;
+                    console.log('✓ 直接数组格式');
+                } else if (result && typeof result === 'object') {
+                    if ('code' in result) {
+                        if (result.code === 0 || result.code === '0') {
+                            if (Array.isArray(result.data)) {
+                                locations = result.data;
+                                console.log('✓ result.data是数组');
+                            } else if (result.data?.locations && Array.isArray(result.data.locations)) {
+                                locations = result.data.locations;
+                                console.log('✓ result.data.locations');
+                            } else {
+                                console.error('✗ code=0但data格式错误:', result.data);
+                            }
+                        } else {
+                            console.error('✗ code不为0:', result);
+                            showMessage(`错误: ${result.message || result.msg || result.code}`, 'error');
+                            return;
+                        }
+                    } else if (result.locations && Array.isArray(result.locations)) {
+                        locations = result.locations;
+                        console.log('✓ result.locations');
+                    } else {
+                        console.error('✗ 无法识别格式,键:', Object.keys(result));
+                        showMessage('数据格式无法识别', 'error');
+                        return;
+                    }
                 }
+                
+                if (!Array.isArray(locations)) {
+                    console.error('✗ locations不是数组:', typeof locations);
+                    showMessage('数据类型错误', 'error');
+                    return;
+                }
+                
+                console.log(`✓ 成功: ${locations.length}条数据`);
+                
+                if (locations.length === 0) {
+                    showMessage('暂无位置数据', 'error');
+                    document.getElementById('dateList').innerHTML = '<div style="text-align:center;color:#999;padding:10px;">暂无数据</div>';
+                    clearMap();
+                    return;
+                }
+                
+                if (locations.length > 0) console.log('示例:', locations[0]);
+                
+                allLocations[deviceId] = locations;
+                displayDateList(deviceId);
             } catch (error) {
-                showMessage('加载位置失败', 'error');
+                console.error('加载位置失败:', error);
+                showMessage('加载失败: ' + error.message, 'error');
             }
         }
 
-        // 按日期分组
         function displayDateList(deviceId) {
             const locations = allLocations[deviceId] || [];
-            const dateMap = {};
+            if (locations.length === 0) {
+                document.getElementById('dateList').innerHTML = '<div style="text-align:center;color:#999;padding:10px;">暂无数据</div>';
+                clearMap();
+                return;
+            }
             
+            const dateMap = {};
             locations.forEach(loc => {
-const date = formatTimestamp(getTime(loc)).split(' ')[0];
-                if (!dateMap[date]) dateMap[date] = [];
-                dateMap[date].push(loc);
+                const timeField = loc.timestamp || loc.time;
+                if (!timeField) return;
+                const dateStr = formatTimestamp(timeField).split(' ')[0];
+                if (dateStr === '-') return;
+                if (!dateMap[dateStr]) dateMap[dateStr] = [];
+                dateMap[dateStr].push(loc);
             });
             
             const dates = Object.keys(dateMap).sort().reverse();
-            const list = document.getElementById('dateList');
-            list.innerHTML = '<div style="padding:10px;font-weight:600;">📅 选择日期</div>';
-            
             if (dates.length === 0) {
-                list.innerHTML += '<div style="text-align:center;color:#999;padding:10px;">暂无数据</div>';
-                // 清空地图
-                if (markers) markers.setMap(null);
-                if (polyline) polyline.setMap(null);
-                document.getElementById('infoCard').classList.remove('show');
+                document.getElementById('dateList').innerHTML = '<div style="text-align:center;color:#999;padding:10px;">无有效日期</div>';
                 return;
             }
+            
+            const list = document.getElementById('dateList');
+            list.innerHTML = '<div style="padding:10px;font-weight:600;">📅 选择日期</div>';
             
             dates.forEach(date => {
                 const item = document.createElement('div');
@@ -388,11 +523,9 @@ const date = formatTimestamp(getTime(loc)).split(' ')[0];
                 list.appendChild(item);
             });
             
-            // 自动选择最新日期并显示地图
-            selectDate(dates[0], dateMap[dates[0]]);
+            if (dates.length > 0) selectDate(dates[0], dateMap[dates[0]]);
         }
 
-        // 选择日期并显示轨迹
         function selectDate(date, locations) {
             currentDate = date;
             document.querySelectorAll('.date-item').forEach(d => {
@@ -401,169 +534,156 @@ const date = formatTimestamp(getTime(loc)).split(' ')[0];
             displayLocations(locations);
         }
 
-        // 核心显示逻辑：区分 GPS 和 Network
         function displayLocations(locations) {
             if (!map || !locations || locations.length === 0) {
-                showMessage('该日期没有数据', 'error');
+                clearMap();
                 return;
             }
 
-            // 清除旧标记
-            if (markers) markers.setMap(null);
-            if (polyline) polyline.setMap(null);
-            closePointPopup();
+            clearMap();
 
-            // 分离 GPS 和 Network 点
-            const gpsLocs = locations.filter(loc => 
-                (loc.source === 'gps' || loc.provider === 'gps') && loc.latitude && loc.longitude
-            );
-            const networkLocs = locations.filter(loc => 
-                (loc.source === 'network' || loc.provider === 'network') && loc.latitude && loc.longitude
-            );
+            const gpsLocs = locations.filter(loc => {
+                const source = (loc.source || loc.provider || '').toLowerCase();
+                return source === 'gps' && loc.latitude && loc.longitude;
+            });
+            
+            const networkLocs = locations.filter(loc => {
+                const source = (loc.source || loc.provider || '').toLowerCase();
+                return source === 'network' && loc.latitude && loc.longitude;
+            });
 
-            console.log(`GPS: ${gpsLocs.length}, Network: ${networkLocs.length}`);
-
-            // 准备所有标记点
             const geometries = [];
             
             gpsLocs.forEach((loc, idx) => {
                 geometries.push({
                     id: `gps_${idx}`,
-                    position: new TMap.LatLng(Number(loc.latitude), Number(loc.longitude)),
-                    styleId: 'gps'
+                    position: new TMap.LatLng(parseFloat(loc.latitude), parseFloat(loc.longitude)),
+                    styleId: 'gps',
+                    properties: { location: loc }
                 });
             });
 
             networkLocs.forEach((loc, idx) => {
                 geometries.push({
                     id: `net_${idx}`,
-                    position: new TMap.LatLng(Number(loc.latitude), Number(loc.longitude)),
-                    styleId: 'network'
+                    position: new TMap.LatLng(parseFloat(loc.latitude), parseFloat(loc.longitude)),
+                    styleId: 'network',
+                    properties: { location: loc }
                 });
             });
 
-            // 创建标记（使用SVG自定义颜色）
-            markers = new TMap.MultiMarker({
-                map: map,
-                styles: {
-                    gps: new TMap.MarkerStyle({
-                        width: 16,
-                        height: 16,
-                        anchor: { x: 8, y: 8 },
-                        src: 'data:image/svg+xml;base64,' + btoa(`
-                            <svg width="16" height="16" xmlns="http://www.w3.org/2000/svg">
-                                <circle cx="8" cy="8" r="6" fill="#10b981" stroke="white" stroke-width="2"/>
-                            </svg>
-                        `)
-                    }),
-                    network: new TMap.MarkerStyle({
-                        width: 14,
-                        height: 14,
-                        anchor: { x: 7, y: 7 },
-                        src: 'data:image/svg+xml;base64,' + btoa(`
-                            <svg width="14" height="14" xmlns="http://www.w3.org/2000/svg">
-                                <circle cx="7" cy="7" r="5" fill="#f59e0b" stroke="white" stroke-width="2"/>
-                            </svg>
-                        `)
-                    })
-                },
-                geometries: geometries
-            });
+            if (geometries.length === 0) {
+                showMessage('没有有效位置', 'error');
+                return;
+            }
 
-            // 添加点击事件显示时间
-            markers.on('click', (evt) => {
-                const geometry = evt.geometry;
-                const idParts = geometry.id.split('_');
-                const type = idParts[0];
-                const index = parseInt(idParts[1]);
-                
-                let location;
-                if (type === 'gps') {
-                    location = gpsLocs[index];
-                } else {
-                    location = networkLocs[index];
-                }
-                
-                if (location) {
-                    showPointInfo(<strong>时间:</strong> ${formatTimestamp(getTime(location))}
-);
-                }
-            });
-
-            // 只用 GPS 点画轨迹线
-            if (gpsLocs.length > 1) {
-                const path = gpsLocs.map(loc => 
-                    new TMap.LatLng(Number(loc.latitude), Number(loc.longitude))
-                );
-
-                polyline = new TMap.MultiPolyline({
+            try {
+                markers = new TMap.MultiMarker({
                     map: map,
                     styles: {
-                        line: new TMap.PolylineStyle({
-                            color: '#667eea',
-                            width: 3,
-                            borderWidth: 0
+                        gps: new TMap.MarkerStyle({
+                            width: 16,
+                            height: 16,
+                            anchor: { x: 8, y: 8 },
+                            src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+                                '<svg width="16" height="16" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="6" fill="#10b981" stroke="white" stroke-width="2"/></svg>'
+                            )
+                        }),
+                        network: new TMap.MarkerStyle({
+                            width: 14,
+                            height: 14,
+                            anchor: { x: 7, y: 7 },
+                            src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+                                '<svg width="14" height="14" xmlns="http://www.w3.org/2000/svg"><circle cx="7" cy="7" r="5" fill="#f59e0b" stroke="white" stroke-width="2"/></svg>'
+                            )
                         })
                     },
-                    geometries: [{
-                        id: 'track',
-                        styleId: 'line',
-                        paths: path
-                    }]
+                    geometries: geometries
                 });
+
+                markers.on('click', (evt) => {
+                    if (evt.geometry.properties?.location) {
+                        showPointInfo(evt.geometry.properties.location, evt.geometry.position);
+                    }
+                });
+            } catch (error) {
+                console.error('创建标记失败:', error);
             }
 
-            // 居中到最新的点
-            const latest = locations[0];
-            if (latest) {
-                map.setCenter(new TMap.LatLng(Number(latest.latitude), Number(latest.longitude)));
-                map.setZoom(16);
-                
-                // 显示信息卡
-                showInfo(locations);
+            if (gpsLocs.length > 1) {
+                try {
+                    polyline = new TMap.MultiPolyline({
+                        map: map,
+                        styles: {
+                            line: new TMap.PolylineStyle({
+                                color: '#667eea',
+                                width: 3,
+                                borderWidth: 0
+                            })
+                        },
+                        geometries: [{
+                            id: 'track',
+                            styleId: 'line',
+                            paths: gpsLocs.map(loc => 
+                                new TMap.LatLng(parseFloat(loc.latitude), parseFloat(loc.longitude))
+                            )
+                        }]
+                    });
+                } catch (error) {
+                    console.error('创建轨迹失败:', error);
+                }
             }
+
+            const firstLoc = gpsLocs[0] || networkLocs[0];
+            if (firstLoc) {
+                map.setCenter(new TMap.LatLng(parseFloat(firstLoc.latitude), parseFloat(firstLoc.longitude)));
+                map.setZoom(16);
+            }
+
+            showInfo(locations, gpsLocs.length, networkLocs.length);
         }
 
-// 格式化时间戳
-function formatTimestamp(t) {
-    if (!t) return '-';
+        function clearMap() {
+            if (markers) {
+                markers.setMap(null);
+                markers = null;
+            }
+            if (polyline) {
+                polyline.setMap(null);
+                polyline = null;
+            }
+            closePointPopup();
+            document.getElementById('infoCard').classList.remove('show');
+        }
 
-    // 兼容 timestamp 字段
-    if (typeof t === 'object') {
-        t = getTime(t);
-    }
-
-    const ts = typeof t === 'string' ? parseInt(t) : t;
-    const date = new Date(ts);
-
-    if (isNaN(date.getTime())) return '-';
-
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
-
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-}
-
-
-        // 显示日期统计信息
-        function showInfo(locations) {
-            const latest = locations[0];
-            const gpsCount = locations.filter(l => l.source === 'gps' || l.provider === 'gps').length;
-            const networkCount = locations.filter(l => l.source === 'network' || l.provider === 'network').length;
+        function formatTimestamp(timestamp) {
+            if (!timestamp) return '-';
+            if (typeof timestamp === 'string' && timestamp.includes('-')) return timestamp;
             
-            let html = `
+            const date = new Date(typeof timestamp === 'string' ? parseInt(timestamp) : timestamp);
+            if (isNaN(date.getTime())) return '-';
+            
+            return date.getFullYear() + '-' + 
+                   String(date.getMonth() + 1).padStart(2, '0') + '-' +
+                   String(date.getDate()).padStart(2, '0') + ' ' +
+                   String(date.getHours()).padStart(2, '0') + ':' +
+                   String(date.getMinutes()).padStart(2, '0') + ':' +
+                   String(date.getSeconds()).padStart(2, '0');
+        }
+
+        function showInfo(locations, gpsCount, networkCount) {
+            const latest = locations[0];
+            const timeField = latest.timestamp || latest.time;
+            
+            document.getElementById('infoContent').innerHTML = `
                 <h3>📱 ${currentDate}</h3>
                 <div class="info-row">
                     <span>设备ID</span>
-                    <span>${currentDeviceId.substring(0, 12)}...</span>
+                    <span>${currentDeviceId.length > 20 ? currentDeviceId.substring(0, 20) + '...' : currentDeviceId}</span>
                 </div>
                 <div class="info-row">
                     <span>最后更新</span>
-                    <span>${formatTimestamp(getTime(latest))}</span>
+                    <span>${formatTimestamp(timeField)}</span>
                 </div>
                 <div class="info-row">
                     <span>GPS点数</span>
@@ -579,36 +699,26 @@ function formatTimestamp(t) {
                 </div>
             `;
             
-            document.getElementById('infoContent').innerHTML = html;
             document.getElementById('infoCard').classList.add('show');
         }
 
-        // 显示标记点详细信息
         function showPointInfo(location, position) {
-            const popup = document.getElementById('pointPopup');
-            const content = document.getElementById('pointPopupContent');
+            const type = (location.source || location.provider || '').toLowerCase();
+            const typeColor = type === 'gps' ? '#10b981' : '#f59e0b';
+            const typeText = type === 'gps' ? 'GPS定位' : '网络定位';
+            const timeField = location.timestamp || location.time;
             
-            const type = location.source || location.provider || '未知';
-            const typeColor = (type === 'gps') ? '#10b981' : '#f59e0b';
-            const typeText = (type === 'gps') ? 'GPS定位' : '网络定位';
-            
-            content.innerHTML = `
-                <div style="font-weight:600;margin-bottom:8px;color:${typeColor}">
-                    ${typeText}
-                </div>
-                <div style="margin-bottom:5px">
-                    <strong>时间:</strong> ${formatTimestamp(location.time)}
-                </div>
-                <div style="margin-bottom:5px">
-                    <strong>坐标:</strong> ${location.latitude}, ${location.longitude}
-                </div>
+            document.getElementById('pointPopupContent').innerHTML = `
+                <div style="font-weight:600;margin-bottom:8px;color:${typeColor}">${typeText}</div>
+                <div style="margin-bottom:5px"><strong>时间:</strong> ${formatTimestamp(timeField)}</div>
+                <div style="margin-bottom:5px"><strong>坐标:</strong> ${location.latitude}, ${location.longitude}</div>
                 ${location.accuracy ? `<div style="margin-bottom:5px"><strong>精度:</strong> ${location.accuracy}m</div>` : ''}
                 ${location.altitude ? `<div style="margin-bottom:5px"><strong>海拔:</strong> ${location.altitude}m</div>` : ''}
                 ${location.speed ? `<div><strong>速度:</strong> ${location.speed}m/s</div>` : ''}
             `;
             
-            // 计算弹窗位置
             const pixel = map.projectToContainer(position);
+            const popup = document.getElementById('pointPopup');
             popup.style.left = `${pixel.getX() - 100}px`;
             popup.style.top = `${pixel.getY() - 150}px`;
             popup.classList.add('show');
@@ -623,12 +733,18 @@ function formatTimestamp(t) {
                 showMessage('请先配置', 'error');
                 return;
             }
-            loadDevices();
+            const oldDeviceId = currentDeviceId;
+            allLocations = {};
+            loadDevices().then(() => {
+                if (oldDeviceId) selectDevice(oldDeviceId);
+            });
         }
 
         window.onload = () => {
             loadStoredConfig();
-            setInterval(() => isConfigured && refreshData(), 60000);
+            setInterval(() => {
+                if (isConfigured && currentDeviceId) selectDevice(currentDeviceId);
+            }, 60000);
         };
     </script>
 </body>
