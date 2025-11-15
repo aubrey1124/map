@@ -277,6 +277,13 @@
             };
             document.head.appendChild(script);
         }
+        // 统一取时间字段，兼容 time 和 timestamp
+function getTime(loc) {
+    if (loc.time) return loc.time;
+    if (loc.timestamp) return loc.timestamp;
+    return null;
+}
+
 
         function loadStoredConfig() {
             const savedApiUrl = localStorage.getItem('apiUrl');
@@ -354,7 +361,7 @@
             const dateMap = {};
             
             locations.forEach(loc => {
-                const date = formatTimestamp(loc.time).split(' ')[0];
+const date = formatTimestamp(getTime(loc)).split(' ')[0];
                 if (!dateMap[date]) dateMap[date] = [];
                 dateMap[date].push(loc);
             });
@@ -478,7 +485,8 @@
                 }
                 
                 if (location) {
-                    showPointInfo(location, geometry.position);
+                    showPointInfo(<strong>时间:</strong> ${formatTimestamp(getTime(location))}
+);
                 }
             });
 
@@ -516,26 +524,30 @@
             }
         }
 
-        // 格式化时间戳
-        function formatTimestamp(timestamp) {
-            if (!timestamp) return '-';
-            
-            if (typeof timestamp === 'string' && (timestamp.includes('-') || timestamp.includes(':'))) {
-                return timestamp;
-            }
-            
-            const ts = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
-            const date = new Date(ts);
-            
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            const hours = String(date.getHours()).padStart(2, '0');
-            const minutes = String(date.getMinutes()).padStart(2, '0');
-            const seconds = String(date.getSeconds()).padStart(2, '0');
-            
-            return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-        }
+// 格式化时间戳
+function formatTimestamp(t) {
+    if (!t) return '-';
+
+    // 兼容 timestamp 字段
+    if (typeof t === 'object') {
+        t = getTime(t);
+    }
+
+    const ts = typeof t === 'string' ? parseInt(t) : t;
+    const date = new Date(ts);
+
+    if (isNaN(date.getTime())) return '-';
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
 
         // 显示日期统计信息
         function showInfo(locations) {
@@ -551,7 +563,7 @@
                 </div>
                 <div class="info-row">
                     <span>最后更新</span>
-                    <span>${formatTimestamp(latest.time)}</span>
+                    <span>${formatTimestamp(getTime(latest))}</span>
                 </div>
                 <div class="info-row">
                     <span>GPS点数</span>
