@@ -51,7 +51,7 @@
             width: 100%;
         }
         .main-content { flex: 1; display: flex; overflow: hidden; position: relative; }
-.sidebar {
+        .sidebar {
             width: 250px;
             background: white;
             border-right: 1px solid #e0e0e0;
@@ -692,7 +692,17 @@
                 console.error('创建标记失败:', error);
             }
 
-            if (gpsLocs.length > 1) {
+            // 按时间排序所有位置点,画完整轨迹
+            const allValidLocs = locations
+                .filter(loc => loc.latitude && loc.longitude)
+                .sort((a, b) => {
+                    const timeA = a.timestamp || a.time || 0;
+                    const timeB = b.timestamp || b.time || 0;
+                    return (typeof timeA === 'string' ? parseInt(timeA) : timeA) - 
+                           (typeof timeB === 'string' ? parseInt(timeB) : timeB);
+                });
+            
+            if (allValidLocs.length > 1) {
                 try {
                     polyline = new TMap.MultiPolyline({
                         map: map,
@@ -706,7 +716,7 @@
                         geometries: [{
                             id: 'track',
                             styleId: 'line',
-                            paths: gpsLocs.map(loc => 
+                            paths: allValidLocs.map(loc => 
                                 new TMap.LatLng(parseFloat(loc.latitude), parseFloat(loc.longitude))
                             )
                         }]
@@ -778,57 +788,3 @@
                 <div class="info-row">
                     <span>总计</span>
                     <span>${locations.length}</span>
-                </div>
-            `;
-            
-            document.getElementById('infoCard').classList.add('show');
-        }
-
-        function showPointInfo(location, position) {
-            const type = (location.source || location.provider || '').toLowerCase();
-            const typeColor = type === 'gps' ? '#10b981' : '#f59e0b';
-            const typeText = type === 'gps' ? 'GPS定位' : '网络定位';
-            const timeField = location.timestamp || location.time;
-            
-            document.getElementById('pointPopupContent').innerHTML = `
-                <div style="font-weight:600;margin-bottom:8px;color:${typeColor}">${typeText}</div>
-                <div style="margin-bottom:5px"><strong>时间:</strong> ${formatTimestamp(timeField)}</div>
-                <div style="margin-bottom:5px"><strong>坐标:</strong> ${location.latitude}, ${location.longitude}</div>
-                ${location.accuracy ? `<div style="margin-bottom:5px"><strong>精度:</strong> ${location.accuracy}m</div>` : ''}
-                ${location.altitude ? `<div style="margin-bottom:5px"><strong>海拔:</strong> ${location.altitude}m</div>` : ''}
-                ${location.speed ? `<div><strong>速度:</strong> ${location.speed}m/s</div>` : ''}
-            `;
-            
-            const pixel = map.projectToContainer(position);
-            const popup = document.getElementById('pointPopup');
-            popup.style.left = `${pixel.getX() - 100}px`;
-            popup.style.top = `${pixel.getY() - 150}px`;
-            popup.classList.add('show');
-        }
-
-        function closePointPopup() {
-            document.getElementById('pointPopup').classList.remove('show');
-        }
-
-        function refreshData() {
-            if (!isConfigured) {
-                showMessage('请先配置', 'error');
-                return;
-            }
-            const oldDeviceId = currentDeviceId;
-            allLocations = {};
-            loadDevices().then(() => {
-                if (oldDeviceId) selectDevice(oldDeviceId);
-            });
-        }
-
-        window.onload = () => {
-            loadStoredConfig();
-            setInterval(() => {
-                if (isConfigured && currentDeviceId) selectDevice(currentDeviceId);
-            }, 60000);
-        };
-    </script>
-</body>
-</html>
-            
