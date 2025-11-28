@@ -51,7 +51,7 @@
             width: 100%;
         }
         .main-content { flex: 1; display: flex; overflow: hidden; position: relative; }
-        .sidebar {
+.sidebar {
             width: 250px;
             background: white;
             border-right: 1px solid #e0e0e0;
@@ -616,7 +616,7 @@
             displayLocations(locations);
         }
 
-        function displayLocations(locations) {
+function displayLocations(locations) {
             if (!map || !locations || locations.length === 0) {
                 clearMap();
                 return;
@@ -624,40 +624,45 @@
 
             clearMap();
 
-            const gpsLocs = locations.filter(loc => {
-                const source = (loc.source || loc.provider || '').toLowerCase();
-                return source === 'gps' && loc.latitude && loc.longitude;
-            });
+            // 过滤所有有效坐标点
+            const validLocs = locations.filter(loc => loc.latitude && loc.longitude);
             
-            const networkLocs = locations.filter(loc => {
-                const source = (loc.source || loc.provider || '').toLowerCase();
-                return source === 'network' && loc.latitude && loc.longitude;
-            });
-
-            const geometries = [];
-            
-            gpsLocs.forEach((loc, idx) => {
-                geometries.push({
-                    id: `gps_${idx}`,
-                    position: new TMap.LatLng(parseFloat(loc.latitude), parseFloat(loc.longitude)),
-                    styleId: 'gps',
-                    properties: { location: loc }
-                });
-            });
-
-            networkLocs.forEach((loc, idx) => {
-                geometries.push({
-                    id: `net_${idx}`,
-                    position: new TMap.LatLng(parseFloat(loc.latitude), parseFloat(loc.longitude)),
-                    styleId: 'network',
-                    properties: { location: loc }
-                });
-            });
-
-            if (geometries.length === 0) {
+            if (validLocs.length === 0) {
                 showMessage('没有有效位置', 'error');
                 return;
             }
+
+            // 按时间排序(从早到晚)
+            validLocs.sort((a, b) => {
+                const timeA = a.timestamp || a.time || 0;
+                const timeB = b.timestamp || b.time || 0;
+                const numA = typeof timeA === 'string' ? parseInt(timeA) : timeA;
+                const numB = typeof timeB === 'string' ? parseInt(timeB) : timeB;
+                return numA - numB;
+            });
+
+            // 分类统计(仅用于显示)
+            const gpsLocs = validLocs.filter(loc => {
+                const source = (loc.source || loc.provider || '').toLowerCase();
+                return source === 'gps';
+            });
+            
+            const networkLocs = validLocs.filter(loc => {
+                const source = (loc.source || loc.provider || '').toLowerCase();
+                return source === 'network';
+            });
+
+            // 创建所有点的标记
+            const geometries = validLocs.map((loc, idx) => {
+                const source = (loc.source || loc.provider || '').toLowerCase();
+                const styleId = source === 'gps' ? 'gps' : 'network';
+                return {
+                    id: `point_${idx}`,
+                    position: new TMap.LatLng(parseFloat(loc.latitude), parseFloat(loc.longitude)),
+                    styleId: styleId,
+                    properties: { location: loc }
+                };
+            });
 
             try {
                 markers = new TMap.MultiMarker({
@@ -692,17 +697,8 @@
                 console.error('创建标记失败:', error);
             }
 
-            // 按时间排序所有位置点,画完整轨迹
-            const allValidLocs = locations
-                .filter(loc => loc.latitude && loc.longitude)
-                .sort((a, b) => {
-                    const timeA = a.timestamp || a.time || 0;
-                    const timeB = b.timestamp || b.time || 0;
-                    return (typeof timeA === 'string' ? parseInt(timeA) : timeA) - 
-                           (typeof timeB === 'string' ? parseInt(timeB) : timeB);
-                });
-            
-            if (allValidLocs.length > 1) {
+            // 绘制轨迹线 - 包含所有有效点,按时间顺序连接
+            if (validLocs.length > 1) {
                 try {
                     polyline = new TMap.MultiPolyline({
                         map: map,
@@ -716,7 +712,7 @@
                         geometries: [{
                             id: 'track',
                             styleId: 'line',
-                            paths: allValidLocs.map(loc => 
+                            paths: validLocs.map(loc => 
                                 new TMap.LatLng(parseFloat(loc.latitude), parseFloat(loc.longitude))
                             )
                         }]
@@ -726,9 +722,9 @@
                 }
             }
 
-            const firstLoc = gpsLocs[0] || networkLocs[0];
-            if (firstLoc) {
-                map.setCenter(new TMap.LatLng(parseFloat(firstLoc.latitude), parseFloat(firstLoc.longitude)));
+            // 地图中心定位到第一个点
+            if (validLocs.length > 0) {
+                map.setCenter(new TMap.LatLng(parseFloat(validLocs[0].latitude), parseFloat(validLocs[0].longitude)));
                 map.setZoom(16);
             }
 
@@ -788,3 +784,57 @@
                 <div class="info-row">
                     <span>总计</span>
                     <span>${locations.length}</span>
+                </div>
+            `;
+            
+            document.getElementById('infoCard').classList.add('show');
+        }
+
+        function showPointInfo(location, position) {
+            const type = (location.source || location.provider || '').toLowerCase();
+            const typeColor = type === 'gps' ? '#10b981' : '#f59e0b';
+            const typeText = type === 'gps' ? 'GPS定位' : '网络定位';
+            const timeField = location.timestamp || location.time;
+            
+            document.getElementById('pointPopupContent').innerHTML = `
+                <div style="font-weight:600;margin-bottom:8px;color:${typeColor}">${typeText}</div>
+                <div style="margin-bottom:5px"><strong>时间:</strong> ${formatTimestamp(timeField)}</div>
+                <div style="margin-bottom:5px"><strong>坐标:</strong> ${location.latitude}, ${location.longitude}</div>
+                ${location.accuracy ? `<div style="margin-bottom:5px"><strong>精度:</strong> ${location.accuracy}m</div>` : ''}
+                ${location.altitude ? `<div style="margin-bottom:5px"><strong>海拔:</strong> ${location.altitude}m</div>` : ''}
+                ${location.speed ? `<div><strong>速度:</strong> ${location.speed}m/s</div>` : ''}
+            `;
+            
+            const pixel = map.projectToContainer(position);
+            const popup = document.getElementById('pointPopup');
+            popup.style.left = `${pixel.getX() - 100}px`;
+            popup.style.top = `${pixel.getY() - 150}px`;
+            popup.classList.add('show');
+        }
+
+        function closePointPopup() {
+            document.getElementById('pointPopup').classList.remove('show');
+        }
+
+        function refreshData() {
+            if (!isConfigured) {
+                showMessage('请先配置', 'error');
+                return;
+            }
+            const oldDeviceId = currentDeviceId;
+            allLocations = {};
+            loadDevices().then(() => {
+                if (oldDeviceId) selectDevice(oldDeviceId);
+            });
+        }
+
+        window.onload = () => {
+            loadStoredConfig();
+            setInterval(() => {
+                if (isConfigured && currentDeviceId) selectDevice(currentDeviceId);
+            }, 60000);
+        };
+    </script>
+</body>
+</html>
+            
